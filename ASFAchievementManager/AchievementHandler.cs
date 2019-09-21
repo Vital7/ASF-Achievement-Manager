@@ -8,16 +8,20 @@ using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm;
 using ArchiSteamFarm.Localization;
+using JetBrains.Annotations;
 using SteamKit2;
 using SteamKit2.Internal;
 
 namespace ASFAchievementManager {
 	public sealed class AchievementHandler : ClientMsgHandler {
+		private readonly Bot Bot;
 		private readonly ConcurrentDictionary<EMsg, (SemaphoreSlim Semaphore, ClientMsgProtobuf Message)> MessagesToWait = new ConcurrentDictionary<EMsg, (SemaphoreSlim Semaphore, ClientMsgProtobuf Message)>();
+
+		internal AchievementHandler(Bot bot) => Bot = bot ?? throw new ArgumentNullException(nameof(bot));
 
 		public override void HandleMsg(IPacketMsg packetMsg) {
 			if (packetMsg == null) {
-				ASF.ArchiLogger.LogNullError(nameof(packetMsg));
+				Bot.ArchiLogger.LogNullError(nameof(packetMsg));
 				return;
 			}
 
@@ -33,32 +37,32 @@ namespace ASFAchievementManager {
 
 		private async Task<T> GetResponse<T>(IClientMsg request, EMsg expectedResponseType) where T : ClientMsgProtobuf {
 			if ((request == null) || (expectedResponseType == EMsg.Invalid)) {
-				ASF.ArchiLogger.LogNullError(nameof(request));
+				Bot.ArchiLogger.LogNullError(nameof(request));
 				return null;
 			}
-			
+
 			SemaphoreSlim semaphore = new SemaphoreSlim(0, 1);
 			MessagesToWait[expectedResponseType] = (semaphore, null);
 			Client.Send(request);
 
 			if (!await semaphore.WaitAsync(TimeSpan.FromSeconds(ASF.GlobalConfig.ConnectionTimeout)).ConfigureAwait(false)) {
-				ASF.ArchiLogger.LogGenericWarning(string.Format(Strings.ErrorFailingRequest, expectedResponseType.ToString()));
+				Bot.ArchiLogger.LogGenericWarning(string.Format(Strings.ErrorFailingRequest, expectedResponseType.ToString()));
 				return null;
 			}
 
 			ClientMsgProtobuf response = MessagesToWait[expectedResponseType].Message;
-			
+
 			return (T) response;
 		}
-		
+
 		private void HandleGetUserStatsResponse(IPacketMsg packetMsg) {
 			if (packetMsg == null) {
-				ASF.ArchiLogger.LogNullError(nameof(packetMsg));
+				Bot.ArchiLogger.LogNullError(nameof(packetMsg));
 				return;
 			}
 
 			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> response = new ClientMsgProtobuf<CMsgClientGetUserStatsResponse>(packetMsg);
-			
+
 			if (MessagesToWait.ContainsKey(packetMsg.MsgType)) {
 				SemaphoreSlim semaphore = MessagesToWait[packetMsg.MsgType].Semaphore;
 				MessagesToWait[packetMsg.MsgType] = (semaphore, response);
@@ -68,15 +72,15 @@ namespace ASFAchievementManager {
 
 		private void HandleStoreUserStatsResponse(IPacketMsg packetMsg) {
 			if (packetMsg == null) {
-				ASF.ArchiLogger.LogNullError(nameof(packetMsg));
+				Bot.ArchiLogger.LogNullError(nameof(packetMsg));
 				return;
 			}
 
 			ClientMsgProtobuf<CMsgClientStoreUserStatsResponse> response = new ClientMsgProtobuf<CMsgClientStoreUserStatsResponse>(packetMsg);
 			if (!response.Body.game_idSpecified) {
-				ASF.ArchiLogger.LogNullError(nameof(response.Body.game_id));
+				Bot.ArchiLogger.LogNullError(nameof(response.Body.game_id));
 			}
-			
+
 			if (MessagesToWait.ContainsKey(packetMsg.MsgType)) {
 				SemaphoreSlim semaphore = MessagesToWait[packetMsg.MsgType].Semaphore;
 				MessagesToWait[packetMsg.MsgType] = (semaphore, response);
@@ -185,37 +189,38 @@ namespace ASFAchievementManager {
 						stat_id = stats[achievementNum].Dependency,
 						stat_value = set ? stats[achievementNum].DependencyValue : 0
 					};
-					
+
 					statsToSet.Add(dependencyStat);
 				}
 			}
 		}
-		
+
 		#endregion
 
 		#region Endpoints
 
-		internal async Task<string> GetAchievements(Bot bot, ulong gameID) {
-			if ((bot == null) || (gameID == 0)) {
-				ASF.ArchiLogger.LogNullError($"{nameof(bot)} || {nameof(gameID)}");
-				return null;
+		[PublicAPI]
+		public async Task<(List<StatData> Stats, string Response)> GetAchievements(ulong gameID) {
+			if (gameID == 0) {
+				Bot.ArchiLogger.LogNullError(nameof(gameID));
+				return (null, null);
 			}
-			
+
 			if (!Client.IsConnected) {
-				return Strings.BotNotConnected;
+				return (null, Strings.BotNotConnected);
 			}
 
 			ClientMsgProtobuf<CMsgClientGetUserStats> request = new ClientMsgProtobuf<CMsgClientGetUserStats>(EMsg.ClientGetUserStats) {
 				Body = {
 					game_id = gameID,
-					steam_id_for_user = bot.SteamID
+					steam_id_for_user = Bot.SteamID
 				}
 			};
 
 
 			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> userStatsResponse = await GetResponse<ClientMsgProtobuf<CMsgClientGetUserStatsResponse>>(request, EMsg.ClientGetUserStatsResponse).ConfigureAwait(false);
 			if (userStatsResponse == null) {
-				return $"Can't retrieve achievements for {gameID}";
+				return (null, $"Can't retrieve achievements for {gameID}");
 			}
 
 			List<string> responses = new List<string>();
@@ -226,36 +231,31 @@ namespace ASFAchievementManager {
 			const string warningEmoji = "\u26A0\uFE0F";
 
 			if ((stats == null) || (stats.Count == 0)) {
-				bot.ArchiLogger.LogNullError(nameof(stats));
+				Bot.ArchiLogger.LogNullError(nameof(stats));
 			} else {
 				responses = stats.Select(stat => $"{stats.IndexOf(stat) + 1,-5}{(stat.IsSet ? checkMarkEmoji : crossMarkEmoji)} {(stat.Restricted ? $"{warningEmoji} " : "")}{stat.Name}").ToList();
 			}
 
-			return responses.Count > 0 ? $"​\nAchievemens for {gameID}:\n{string.Join(Environment.NewLine, responses)}" : $"Can't retrieve achievements for {gameID}";
+			return (stats, responses.Count > 0 ? $"​\nAchievemens for {gameID}:\n{string.Join(Environment.NewLine, responses)}" : $"Can't retrieve achievements for {gameID}");
 		}
 
-		internal async Task<string> SetAchievements(Bot bot, uint appId, HashSet<uint> achievements, bool set = true) {
-			if ((bot == null) || (appId == 0) || (achievements == null) || (achievements.Count == 0)) {
-				ASF.ArchiLogger.LogNullError($"{nameof(bot)} || {nameof(appId)} || {nameof(achievements)}");
-				return null;
+		[PublicAPI]
+		public async Task<(bool Success, string Response)> SetAchievements(uint appId, HashSet<uint> achievements, bool set = true) {
+			if ((appId == 0) || (achievements == null) || (achievements.Count == 0)) {
+				Bot.ArchiLogger.LogNullError($"{nameof(appId)} || {nameof(achievements)}");
+				return (false, null);
 			}
-			
+
 			if (!Client.IsConnected) {
-				return Strings.BotNotConnected;
+				return (false, Strings.BotNotConnected);
 			}
 
 			List<string> responses = new List<string>();
-			string getAchievementsResult = await GetAchievements(bot, appId).ConfigureAwait(false);
+			(List<StatData> stats, string response) = await GetAchievements(appId).ConfigureAwait(false);
 
 			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> message = (ClientMsgProtobuf<CMsgClientGetUserStatsResponse>) MessagesToWait[EMsg.ClientGetUserStatsResponse].Message;
 			if ((message == null) || (message.Body.eresult != 1)) {
-				return getAchievementsResult;
-			}
-
-			List<StatData> stats = ParseResponse(message.Body);
-			if (stats == null) {
-				responses.Add(Strings.WarningFailed);
-				return $"​\n{string.Join(Environment.NewLine, responses)}";
+				return (false, response);
 			}
 
 			List<CMsgClientStoreUserStats2.Stats> statsToSet = new List<CMsgClientStoreUserStats2.Stats>();
@@ -290,7 +290,7 @@ namespace ASFAchievementManager {
 
 			if (statsToSet.Count == 0) {
 				responses.Add(Strings.WarningFailed);
-				return $"​\n{string.Join(Environment.NewLine, responses)}";
+				return (false, $"​\n{string.Join(Environment.NewLine, responses)}");
 			}
 
 			if (responses.Count > 0) {
@@ -300,21 +300,21 @@ namespace ASFAchievementManager {
 			ClientMsgProtobuf<CMsgClientStoreUserStats2> request = new ClientMsgProtobuf<CMsgClientStoreUserStats2>(EMsg.ClientStoreUserStats2) {
 				Body = {
 					game_id = appId,
-					settor_steam_id = bot.SteamID,
-					settee_steam_id = bot.SteamID,
+					settor_steam_id = Bot.SteamID,
+					settee_steam_id = Bot.SteamID,
 					explicit_reset = false,
 					crc_stats = message.Body.crc_stats
 				}
 			};
 
 			request.Body.stats.AddRange(statsToSet);
-			
+
 			ClientMsgProtobuf<CMsgClientStoreUserStatsResponse> storeResponse = await GetResponse<ClientMsgProtobuf<CMsgClientStoreUserStatsResponse>>(request, EMsg.ClientStoreUserStatsResponse).ConfigureAwait(false);
 
 			responses.Add((storeResponse == null) || (storeResponse.Body.eresult != 1) ? Strings.WarningFailed : Strings.Success);
-			return $"​\n{string.Join(Environment.NewLine, responses)}";
+			return ((storeResponse != null) && (storeResponse.Body.eresult == 1), $"​\n{string.Join(Environment.NewLine, responses)}");
 		}
-		
+
 		#endregion
 	}
 }

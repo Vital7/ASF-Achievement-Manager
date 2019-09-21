@@ -1,5 +1,5 @@
 ﻿namespace ASFAchievementManager {
-	internal class StatData {
+	public class StatData {
 		public uint StatNum { get; set; }
 		public int BitNum { get; set; }
 		public bool IsSet { get; set; }
