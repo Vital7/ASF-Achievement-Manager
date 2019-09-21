@@ -1,9 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace ASFAchievementManager {
-	class StatData {
+﻿namespace ASFAchievementManager {
+	internal class StatData {
 		public uint StatNum { get; set; }
 		public int BitNum { get; set; }
 		public bool IsSet { get; set; }

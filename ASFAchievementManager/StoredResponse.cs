@@ -1,11 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-using SteamKit2.Internal;
+﻿using SteamKit2.Internal;
 
 namespace ASFAchievementManager {
-	class StoredResponse {
+	internal class StoredResponse {
 		public bool Success { get; set; }
-		public CMsgClientGetUserStatsResponse Response { get; set; }		
+		public CMsgClientGetUserStatsResponse Response { get; set; }
 	}
 }
