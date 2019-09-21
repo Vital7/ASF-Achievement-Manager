@@ -4,9 +4,9 @@
 		public int BitNum { get; set; }
 		public bool IsSet { get; set; }
 		public bool Restricted { get; set; }
-		public uint Dependancy { get; set; }
-		public uint DependancyValue { get; set; }
-		public string DependancyName { get; set; }
+		public uint Dependency { get; set; }
+		public uint DependencyValue { get; set; }
+		public string DependencyName { get; set; }
 		public string Name { get; set; }
 	}
 }
