@@ -233,7 +233,7 @@ namespace ASFAchievementManager {
 			if ((stats == null) || (stats.Count == 0)) {
 				Bot.ArchiLogger.LogNullError(nameof(stats));
 			} else {
-				responses = stats.Select(stat => $"{stats.IndexOf(stat) + 1,-5}{(stat.IsSet ? checkMarkEmoji : crossMarkEmoji)} {(stat.Restricted ? $"{warningEmoji} " : "")}{stat.Name}").ToList();
+				responses = stats.Select((stat, index) => $"{index + 1,-5}{(stat.IsSet ? checkMarkEmoji : crossMarkEmoji)} {(stat.Restricted ? $"{warningEmoji} " : "")}{stat.Name}").ToList();
 			}
 
 			return (stats, responses.Count > 0 ? $"​\nAchievemens for {gameID}:\n{string.Join(Environment.NewLine, responses)}" : $"Can't retrieve achievements for {gameID}");
@@ -241,7 +241,7 @@ namespace ASFAchievementManager {
 
 		[PublicAPI]
 		public async Task<(bool Success, string Response)> SetAchievements(uint appId, HashSet<uint> achievements, bool set = true) {
-			if ((appId == 0) || (achievements == null) || (achievements.Count == 0)) {
+			if ((appId == 0) || (achievements == null)) {
 				Bot.ArchiLogger.LogNullError($"{nameof(appId)} || {nameof(achievements)}");
 				return (false, null);
 			}
