@@ -77,7 +77,7 @@ namespace ASFAchievementManager {
 			}
 
 			ClientMsgProtobuf<CMsgClientStoreUserStatsResponse> response = new ClientMsgProtobuf<CMsgClientStoreUserStatsResponse>(packetMsg);
-			if (!response.Body.game_idSpecified) {
+			if (response.Body.game_id == 0) {
 				Bot.ArchiLogger.LogNullError(nameof(response.Body.game_id));
 			}
 
@@ -93,7 +93,7 @@ namespace ASFAchievementManager {
 		private static List<StatData> ParseResponse(CMsgClientGetUserStatsResponse response) {
 			List<StatData> result = new List<StatData>();
 			KeyValue keyValues = new KeyValue();
-			if (response.schemaSpecified && (response.schema != null)) {
+			if (response.schema != null) {
 				using (MemoryStream ms = new MemoryStream(response.schema)) {
 					if (!keyValues.TryReadAsBinary(ms)) {
 						ASF.ArchiLogger.LogGenericError(string.Format(Strings.ErrorIsInvalid, nameof(response.schema)));
