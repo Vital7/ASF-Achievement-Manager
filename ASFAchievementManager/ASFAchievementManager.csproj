@@ -12,7 +12,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\..\ASF-public\ArchiSteamFarm\ArchiSteamFarm.csproj" />
+		<ProjectReference Include="..\..\..\ASF-public\ArchiSteamFarm\ArchiSteamFarm.csproj" />
 	</ItemGroup>
 
 </Project>
