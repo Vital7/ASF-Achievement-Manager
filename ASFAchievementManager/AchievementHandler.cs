@@ -15,7 +15,7 @@ using SteamKit2.Internal;
 namespace ASFAchievementManager {
 	public sealed class AchievementHandler : ClientMsgHandler {
 		private readonly Bot Bot;
-		private readonly ConcurrentDictionary<EMsg, (SemaphoreSlim Semaphore, ClientMsgProtobuf Message)> MessagesToWait = new ConcurrentDictionary<EMsg, (SemaphoreSlim Semaphore, ClientMsgProtobuf Message)>();
+		private readonly ConcurrentDictionary<EMsg, TaskCompletionSource<ClientMsgProtobuf>> MessagesToWait = new ConcurrentDictionary<EMsg, TaskCompletionSource<ClientMsgProtobuf>>();
 
 		internal AchievementHandler(Bot bot) => Bot = bot ?? throw new ArgumentNullException(nameof(bot));
 
@@ -41,18 +41,25 @@ namespace ASFAchievementManager {
 				return null;
 			}
 
-			SemaphoreSlim semaphore = new SemaphoreSlim(0, 1);
-			MessagesToWait[expectedResponseType] = (semaphore, null);
-			Client.Send(request);
-
-			if (!await semaphore.WaitAsync(TimeSpan.FromSeconds(ASF.GlobalConfig.ConnectionTimeout)).ConfigureAwait(false)) {
-				Bot.ArchiLogger.LogGenericWarning(string.Format(Strings.ErrorFailingRequest, expectedResponseType.ToString()));
+			if (Client == null) {
+				Bot.ArchiLogger.LogNullError(nameof(Client));
 				return null;
 			}
 
-			ClientMsgProtobuf response = MessagesToWait[expectedResponseType].Message;
+			MessagesToWait[expectedResponseType] = new TaskCompletionSource<ClientMsgProtobuf>();
+			Client.Send(request);
 
-			return (T) response;
+			Task<ClientMsgProtobuf> task = MessagesToWait[expectedResponseType].Task;
+			CancellationTokenSource cancellationToken = new CancellationTokenSource(TimeSpan.FromSeconds(ASF.GlobalConfig.ConnectionTimeout));
+			if (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(ASF.GlobalConfig.ConnectionTimeout), cancellationToken.Token)).ConfigureAwait(false) == task) {
+				cancellationToken.Cancel();
+				return (T) await task.ConfigureAwait(false);
+			}
+
+			MessagesToWait[expectedResponseType].SetCanceled();
+			Bot.ArchiLogger.LogGenericWarning(string.Format(Strings.ErrorFailingRequest, expectedResponseType.ToString()));
+			return null;
+
 		}
 
 		private void HandleGetUserStatsResponse(IPacketMsg packetMsg) {
@@ -64,9 +71,7 @@ namespace ASFAchievementManager {
 			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> response = new ClientMsgProtobuf<CMsgClientGetUserStatsResponse>(packetMsg);
 
 			if (MessagesToWait.ContainsKey(packetMsg.MsgType)) {
-				SemaphoreSlim semaphore = MessagesToWait[packetMsg.MsgType].Semaphore;
-				MessagesToWait[packetMsg.MsgType] = (semaphore, response);
-				semaphore.Release();
+				MessagesToWait[packetMsg.MsgType].TrySetResult(response);
 			}
 		}
 
@@ -82,9 +87,7 @@ namespace ASFAchievementManager {
 			}
 
 			if (MessagesToWait.ContainsKey(packetMsg.MsgType)) {
-				SemaphoreSlim semaphore = MessagesToWait[packetMsg.MsgType].Semaphore;
-				MessagesToWait[packetMsg.MsgType] = (semaphore, response);
-				semaphore.Release();
+				MessagesToWait[packetMsg.MsgType].TrySetResult(response);
 			}
 		}
 
@@ -101,22 +104,26 @@ namespace ASFAchievementManager {
 					}
 				}
 
-				//first we enumerate all real achievements
+				// At first we enumerate all real achievements
 				foreach (KeyValue stat in keyValues["stats"].Children) {
+					
 					if (stat["type"].Value == "4") {
 						foreach (KeyValue achievement in stat["bits"].Children) {
-							int bitNum = int.Parse(achievement.Name);
-							uint statNum = uint.Parse(stat.Name);
+							int bitNum = int.Parse(achievement.Name!);
+							uint statNum = uint.Parse(stat.Name!);
 							bool isSet = false;
-							if (response.stats?.Find(statElement => statElement.stat_id == statNum) != null) {
-								isSet = (response.stats.Find(statElement => statElement.stat_id == statNum).stat_value & ((uint) 1 << bitNum)) != 0;
+
+							CMsgClientGetUserStatsResponse.Stats statObject = response.stats?.Find(statElement => statElement.stat_id == statNum);
+							if (statObject != null) {
+								isSet = (statObject.stat_value & ((uint) 1 << bitNum)) != 0;
 							}
 
 							bool restricted = achievement["permission"] != KeyValue.Invalid;
 
-							string dependencyName = achievement["progress"] == KeyValue.Invalid ? "" : achievement["progress"]["value"]["operand1"].Value;
+							bool isDependent = achievement["progress"] == KeyValue.Invalid;
+							string dependencyName = isDependent ? "" : achievement["progress"]["value"]["operand1"].Value;
 
-							uint dependencyValue = uint.Parse(achievement["progress"] == KeyValue.Invalid ? "0" : achievement["progress"]["max_val"].Value);
+							uint dependencyValue = isDependent ? 0 : uint.Parse(achievement["progress"]["max_val"].Value!);
 							string lang = CultureInfo.CurrentUICulture.EnglishName.ToLower();
 							if (lang.IndexOf('(') > 0) {
 								lang = lang.Substring(0, lang.IndexOf('(') - 1);
@@ -142,10 +149,10 @@ namespace ASFAchievementManager {
 					}
 				}
 
-				//Now we update all dependencies
+				// Now we update all dependencies
 				foreach (KeyValue stat in keyValues["stats"].Children) {
 					if (stat["type"].AsUnsignedByte() == 1) {
-						uint statNum = uint.Parse(stat.Name);
+						uint statNum = uint.Parse(stat.Name!);
 						bool restricted = stat["permission"] != KeyValue.Invalid;
 						string name = stat["name"].Value;
 						StatData parentStat = result.Find(item => item.DependencyName == name);
@@ -169,10 +176,12 @@ namespace ASFAchievementManager {
 
 			CMsgClientStoreUserStats2.Stats currentstat = statsToSet.Find(stat => stat.stat_id == stats[achievementNum].StatNum);
 			if (currentstat == null) {
+				CMsgClientGetUserStatsResponse.Stats statValue = storedResponse.stats.Find(stat => stat.stat_id == stats[achievementNum].StatNum);
 				currentstat = new CMsgClientStoreUserStats2.Stats {
 					stat_id = stats[achievementNum].StatNum,
-					stat_value = storedResponse.stats.Find(stat => stat.stat_id == stats[achievementNum].StatNum) != null ? storedResponse.stats.Find(stat => stat.stat_id == stats[achievementNum].StatNum).stat_value : 0
+					stat_value = statValue?.stat_value ?? 0
 				};
+
 				statsToSet.Add(currentstat);
 			}
 
@@ -200,10 +209,15 @@ namespace ASFAchievementManager {
 		#region Endpoints
 
 		[PublicAPI]
-		public async Task<(List<StatData> Stats, string Response)> GetAchievements(ulong gameID) {
-			if (gameID == 0) {
-				Bot.ArchiLogger.LogNullError(nameof(gameID));
-				return (null, null);
+		public async Task<(List<StatData> Stats, string Response)> GetAchievements(uint appID) {
+			if (appID == 0) {
+				Bot.ArchiLogger.LogNullError(nameof(appID));
+				return default;
+			}
+
+			if (Client == null) {
+				Bot.ArchiLogger.LogNullError(nameof(Client));
+				return default;
 			}
 
 			if (!Client.IsConnected) {
@@ -212,15 +226,14 @@ namespace ASFAchievementManager {
 
 			ClientMsgProtobuf<CMsgClientGetUserStats> request = new ClientMsgProtobuf<CMsgClientGetUserStats>(EMsg.ClientGetUserStats) {
 				Body = {
-					game_id = gameID,
+					game_id = appID,
 					steam_id_for_user = Bot.SteamID
 				}
 			};
 
-
 			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> userStatsResponse = await GetResponse<ClientMsgProtobuf<CMsgClientGetUserStatsResponse>>(request, EMsg.ClientGetUserStatsResponse).ConfigureAwait(false);
 			if (userStatsResponse == null) {
-				return (null, $"Can't retrieve achievements for {gameID}");
+				return (null, $"Can't retrieve achievements for {appID}");
 			}
 
 			List<string> responses = new List<string>();
@@ -236,14 +249,19 @@ namespace ASFAchievementManager {
 				responses = stats.Select((stat, index) => $"{index + 1,-5}{(stat.IsSet ? checkMarkEmoji : crossMarkEmoji)} {(stat.Restricted ? $"{warningEmoji} " : "")}{stat.Name}").ToList();
 			}
 
-			return (stats, responses.Count > 0 ? $"​\nAchievemens for {gameID}:\n{string.Join(Environment.NewLine, responses)}" : $"Can't retrieve achievements for {gameID}");
+			return (stats, responses.Count > 0 ? $"\u200B\nAchievements for {appID}:\n{string.Join(Environment.NewLine, responses)}" : $"Can't retrieve achievements for {appID}");
 		}
 
 		[PublicAPI]
-		public async Task<(bool Success, string Response)> SetAchievements(uint appId, HashSet<uint> achievements, bool set = true) {
-			if ((appId == 0) || (achievements == null)) {
-				Bot.ArchiLogger.LogNullError($"{nameof(appId)} || {nameof(achievements)}");
+		public async Task<(bool Success, string Response)> SetAchievements(uint appID, HashSet<uint> achievements, bool set = true) {
+			if ((appID == 0) || (achievements == null)) {
+				Bot.ArchiLogger.LogNullError($"{nameof(appID)} || {nameof(achievements)}");
 				return (false, null);
+			}
+
+			if (Client == null) {
+				Bot.ArchiLogger.LogNullError(nameof(Client));
+				return default;
 			}
 
 			if (!Client.IsConnected) {
@@ -251,10 +269,17 @@ namespace ASFAchievementManager {
 			}
 
 			List<string> responses = new List<string>();
-			(List<StatData> stats, string response) = await GetAchievements(appId).ConfigureAwait(false);
+			(List<StatData> stats, string response) = await GetAchievements(appID).ConfigureAwait(false);
 
-			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> message = (ClientMsgProtobuf<CMsgClientGetUserStatsResponse>) MessagesToWait[EMsg.ClientGetUserStatsResponse].Message;
-			if ((message == null) || (message.Body.eresult != 1)) {
+			ClientMsgProtobuf<CMsgClientGetUserStats> getRequest = new ClientMsgProtobuf<CMsgClientGetUserStats>(EMsg.ClientGetUserStats) {
+				Body = {
+					game_id = appID,
+					steam_id_for_user = Bot.SteamID
+				}
+			};
+
+			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> message = await GetResponse<ClientMsgProtobuf<CMsgClientGetUserStatsResponse>>(getRequest, EMsg.ClientGetUserStatsResponse).ConfigureAwait(false);
+			if ((message == null) || (message.Body.eresult != (int) EResult.OK)) {
 				return (false, response);
 			}
 
@@ -290,7 +315,7 @@ namespace ASFAchievementManager {
 
 			if (statsToSet.Count == 0) {
 				responses.Add(Strings.WarningFailed);
-				return (false, $"​\n{string.Join(Environment.NewLine, responses)}");
+				return (false, $"\u200B\n{string.Join(Environment.NewLine, responses)}");
 			}
 
 			if (responses.Count > 0) {
@@ -299,7 +324,7 @@ namespace ASFAchievementManager {
 
 			ClientMsgProtobuf<CMsgClientStoreUserStats2> request = new ClientMsgProtobuf<CMsgClientStoreUserStats2>(EMsg.ClientStoreUserStats2) {
 				Body = {
-					game_id = appId,
+					game_id = appID,
 					settor_steam_id = Bot.SteamID,
 					settee_steam_id = Bot.SteamID,
 					explicit_reset = false,
@@ -311,8 +336,10 @@ namespace ASFAchievementManager {
 
 			ClientMsgProtobuf<CMsgClientStoreUserStatsResponse> storeResponse = await GetResponse<ClientMsgProtobuf<CMsgClientStoreUserStatsResponse>>(request, EMsg.ClientStoreUserStatsResponse).ConfigureAwait(false);
 
-			responses.Add((storeResponse == null) || (storeResponse.Body.eresult != 1) ? Strings.WarningFailed : Strings.Success);
-			return ((storeResponse != null) && (storeResponse.Body.eresult == 1), $"​\n{string.Join(Environment.NewLine, responses)}");
+			bool success = (storeResponse != null) && (storeResponse.Body.eresult == 1);
+			responses.Add(success ? Strings.Success : Strings.WarningFailed);
+
+			return (success, $"\u200B\n{string.Join(Environment.NewLine, responses)}");
 		}
 
 		#endregion

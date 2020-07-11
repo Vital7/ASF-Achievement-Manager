@@ -25,22 +25,15 @@ namespace ASFAchievementManager {
 				case 1:
 					return null;
 				default:
-					switch (args[0].ToUpperInvariant()) {
-						case "ALIST" when args.Length > 2:
-							return await ResponseAchievementList(steamID, args[1], Utilities.GetArgsAsText(args, 2, ",")).ConfigureAwait(false);
-						case "ALIST":
-							return await ResponseAchievementList(steamID ,bot, args[1]).ConfigureAwait(false);
-						case "ASET" when args.Length > 3:
-							return await ResponseAchievementSet(steamID, args[1], args[2], Utilities.GetArgsAsText(args, 3, ","), true).ConfigureAwait(false);
-						case "ASET" when args.Length > 2:
-							return await ResponseAchievementSet(steamID, bot, args[1], Utilities.GetArgsAsText(args, 2, ","), true).ConfigureAwait(false);
-						case "ARESET" when args.Length > 3:
-							return await ResponseAchievementSet(steamID, args[1], args[2], Utilities.GetArgsAsText(args, 3, ","), false).ConfigureAwait(false);
-						case "ARESET" when args.Length > 2:
-							return await ResponseAchievementSet(steamID, bot, args[1], Utilities.GetArgsAsText(args, 2, ","), false).ConfigureAwait(false);
-						default:
-							return null;
-					}
+					return args[0].ToUpperInvariant() switch {
+						"ALIST" when args.Length > 2 => await ResponseAchievementList(steamID, args[1], Utilities.GetArgsAsText(args, 2, ",")).ConfigureAwait(false),
+						"ALIST" => await ResponseAchievementList(steamID, bot, args[1]).ConfigureAwait(false),
+						"ASET" when args.Length > 3 => await ResponseAchievementSet(steamID, args[1], args[2], Utilities.GetArgsAsText(args, 3, ","), true).ConfigureAwait(false),
+						"ASET" when args.Length > 2 => await ResponseAchievementSet(steamID, bot, args[1], Utilities.GetArgsAsText(args, 2, ","), true).ConfigureAwait(false),
+						"ARESET" when args.Length > 3 => await ResponseAchievementSet(steamID, args[1], args[2], Utilities.GetArgsAsText(args, 3, ","), false).ConfigureAwait(false),
+						"ARESET" when args.Length > 2 => await ResponseAchievementSet(steamID, bot, args[1], Utilities.GetArgsAsText(args, 2, ","), false).ConfigureAwait(false),
+						_ => null
+					};
 			}
 		}
 
