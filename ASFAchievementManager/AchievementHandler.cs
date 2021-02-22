@@ -15,7 +15,7 @@ using SteamKit2.Internal;
 namespace ASFAchievementManager {
 	public sealed class AchievementHandler : ClientMsgHandler {
 		private readonly Bot Bot;
-		private readonly ConcurrentDictionary<EMsg, TaskCompletionSource<ClientMsgProtobuf>> MessagesToWait = new ConcurrentDictionary<EMsg, TaskCompletionSource<ClientMsgProtobuf>>();
+		private readonly ConcurrentDictionary<EMsg, TaskCompletionSource<ClientMsgProtobuf>> MessagesToWait = new();
 
 		internal AchievementHandler(Bot bot) => Bot = bot ?? throw new ArgumentNullException(nameof(bot));
 
@@ -46,18 +46,22 @@ namespace ASFAchievementManager {
 				return null;
 			}
 
+			if (ASF.GlobalConfig == null) {
+				throw new InvalidOperationException(nameof(ASF.GlobalConfig));
+			}
+
 			MessagesToWait[expectedResponseType] = new TaskCompletionSource<ClientMsgProtobuf>();
 			Client.Send(request);
 
 			Task<ClientMsgProtobuf> task = MessagesToWait[expectedResponseType].Task;
-			CancellationTokenSource cancellationToken = new CancellationTokenSource(TimeSpan.FromSeconds(ASF.GlobalConfig.ConnectionTimeout));
+			CancellationTokenSource cancellationToken = new(TimeSpan.FromSeconds(ASF.GlobalConfig.ConnectionTimeout));
 			if (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(ASF.GlobalConfig.ConnectionTimeout), cancellationToken.Token)).ConfigureAwait(false) == task) {
 				cancellationToken.Cancel();
 				return (T) await task.ConfigureAwait(false);
 			}
 
-			MessagesToWait[expectedResponseType].SetCanceled();
-			Bot.ArchiLogger.LogGenericWarning(string.Format(Strings.ErrorFailingRequest, expectedResponseType.ToString()));
+			MessagesToWait[expectedResponseType].SetCanceled(cancellationToken.Token);
+			Bot.ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorFailingRequest, expectedResponseType.ToString()));
 			return null;
 
 		}
@@ -68,7 +72,7 @@ namespace ASFAchievementManager {
 				return;
 			}
 
-			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> response = new ClientMsgProtobuf<CMsgClientGetUserStatsResponse>(packetMsg);
+			ClientMsgProtobuf<CMsgClientGetUserStatsResponse> response = new(packetMsg);
 
 			if (MessagesToWait.ContainsKey(packetMsg.MsgType)) {
 				MessagesToWait[packetMsg.MsgType].TrySetResult(response);
@@ -81,7 +85,7 @@ namespace ASFAchievementManager {
 				return;
 			}
 
-			ClientMsgProtobuf<CMsgClientStoreUserStatsResponse> response = new ClientMsgProtobuf<CMsgClientStoreUserStatsResponse>(packetMsg);
+			ClientMsgProtobuf<CMsgClientStoreUserStatsResponse> response = new(packetMsg);
 			if (response.Body.game_id == 0) {
 				Bot.ArchiLogger.LogNullError(nameof(response.Body.game_id));
 			}
@@ -94,10 +98,10 @@ namespace ASFAchievementManager {
 		#region Utilities
 
 		private static List<StatData> ParseResponse(CMsgClientGetUserStatsResponse response) {
-			List<StatData> result = new List<StatData>();
-			KeyValue keyValues = new KeyValue();
+			List<StatData> result = new();
+			KeyValue keyValues = new();
 			if (response.schema != null) {
-				using (MemoryStream ms = new MemoryStream(response.schema)) {
+				using (MemoryStream ms = new(response.schema)) {
 					if (!keyValues.TryReadAsBinary(ms)) {
 						ASF.ArchiLogger.LogGenericError(string.Format(Strings.ErrorIsInvalid, nameof(response.schema)));
 						return null;
@@ -224,7 +228,7 @@ namespace ASFAchievementManager {
 				return (null, Strings.BotNotConnected);
 			}
 
-			ClientMsgProtobuf<CMsgClientGetUserStats> request = new ClientMsgProtobuf<CMsgClientGetUserStats>(EMsg.ClientGetUserStats) {
+			ClientMsgProtobuf<CMsgClientGetUserStats> request = new(EMsg.ClientGetUserStats) {
 				Body = {
 					game_id = appID,
 					steam_id_for_user = Bot.SteamID
@@ -236,7 +240,7 @@ namespace ASFAchievementManager {
 				return (null, $"Can't retrieve achievements for {appID}");
 			}
 
-			List<string> responses = new List<string>();
+			List<string> responses = new();
 			List<StatData> stats = ParseResponse(userStatsResponse.Body);
 
 			const char checkMarkEmoji = '\u2705';
@@ -268,10 +272,10 @@ namespace ASFAchievementManager {
 				return (false, Strings.BotNotConnected);
 			}
 
-			List<string> responses = new List<string>();
+			List<string> responses = new();
 			(List<StatData> stats, string response) = await GetAchievements(appID).ConfigureAwait(false);
 
-			ClientMsgProtobuf<CMsgClientGetUserStats> getRequest = new ClientMsgProtobuf<CMsgClientGetUserStats>(EMsg.ClientGetUserStats) {
+			ClientMsgProtobuf<CMsgClientGetUserStats> getRequest = new(EMsg.ClientGetUserStats) {
 				Body = {
 					game_id = appID,
 					steam_id_for_user = Bot.SteamID
@@ -283,7 +287,7 @@ namespace ASFAchievementManager {
 				return (false, response);
 			}
 
-			List<CMsgClientStoreUserStats2.Stats> statsToSet = new List<CMsgClientStoreUserStats2.Stats>();
+			List<CMsgClientStoreUserStats2.Stats> statsToSet = new();
 
 			if (achievements.Count == 0) {
 				//if no parameters provided - set/reset all. Don't kill me Archi.
@@ -322,7 +326,7 @@ namespace ASFAchievementManager {
 				responses.Add("Trying to switch remaining achievements..."); //if some errors occured
 			}
 
-			ClientMsgProtobuf<CMsgClientStoreUserStats2> request = new ClientMsgProtobuf<CMsgClientStoreUserStats2>(EMsg.ClientStoreUserStats2) {
+			ClientMsgProtobuf<CMsgClientStoreUserStats2> request = new(EMsg.ClientStoreUserStats2) {
 				Body = {
 					game_id = appID,
 					settor_steam_id = Bot.SteamID,

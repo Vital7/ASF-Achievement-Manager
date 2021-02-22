@@ -2,17 +2,16 @@
 
 	<PropertyGroup>
 		<Authors>Ryzhehvost;Vital7</Authors>
-		<AssemblyVersion>1.2.1.0</AssemblyVersion>
-		<TargetFramework>netcoreapp3.1</TargetFramework>
+		<AssemblyVersion>1.3.0.0</AssemblyVersion>
+		<FileVersion>1.3.0.0</FileVersion>
+		<TargetFramework>net5.0</TargetFramework>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SteamKit2" Version="2.3.0" />
-		<PackageReference Include="System.Composition.AttributedModel" Version="1.4.1" />
-	</ItemGroup>
-
-	<ItemGroup>
-		<ProjectReference Include="..\..\..\ASF-public\ArchiSteamFarm\ArchiSteamFarm.csproj" />
+		<PackageReference Include="JetBrains.Annotations" Version="*" IncludeAssets="compile" />
+		<PackageReference Include="SteamKit2" Version="*" IncludeAssets="compile" />
+		<PackageReference Include="System.Composition.AttributedModel" Version="*" IncludeAssets="compile" />
+		<ProjectReference Include="..\..\..\ASF-public\ArchiSteamFarm\ArchiSteamFarm.csproj" Private="false" ExcludeAssets="all" />
 	</ItemGroup>
 
 </Project>
